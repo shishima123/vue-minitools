@@ -16,6 +16,8 @@ import {
   NGrid,
   NGi,
   NStatistic,
+  NTabs,
+  NTabPane,
 } from 'naive-ui'
 
 // Đồng hồ "bây giờ", tự cập nhật để kết quả luôn đúng
@@ -64,6 +66,15 @@ const mode = useStorage('washing-timer:mode', 'end')
 
 // Bước chỉnh của máy (30 phút hoặc 1 giờ)
 const step = useStorage('washing-timer:step', 30)
+
+// Chiều tính toán:
+// 'to-setting': chọn giờ xong → tính mức hẹn cần cài
+// 'to-finish' : nhập mức hẹn đang cài trên máy → tính giờ xong
+const direction = useStorage('washing-timer:direction', 'to-setting')
+
+// Mức hẹn giờ đang hiển thị trên máy (cho chiều 'to-finish')
+const delayHours = useStorage('washing-timer:delay-hours', 2)
+const delayMinutes = useStorage('washing-timer:delay-minutes', 0)
 
 const MAX_DELAY_MIN = 20 * 60 // Electrolux thường hẹn tối đa 20 giờ
 
@@ -137,6 +148,35 @@ const result = computed(() => {
   }
 })
 
+// Chiều ngược: từ thông số trên máy → giờ hoàn thành
+const reverseResult = computed(() => {
+  const cyc = cycleMin.value
+  const delay = (delayHours.value || 0) * 60 + (delayMinutes.value || 0)
+  if (cyc <= 0 || delay <= 0) return null
+
+  const nowD = now.value
+  // Máy kiểu "kết thúc" không nhận mức hẹn thấp hơn thời gian giặt
+  const belowMinimum = mode.value === 'end' && delay < cyc
+  const effectiveDelay = belowMinimum ? cyc : delay
+
+  let start, finish
+  if (mode.value === 'end') {
+    finish = new Date(nowD.getTime() + effectiveDelay * 60000)
+    start = new Date(finish.getTime() - cyc * 60000)
+  } else {
+    start = new Date(nowD.getTime() + effectiveDelay * 60000)
+    finish = new Date(start.getTime() + cyc * 60000)
+  }
+
+  return {
+    start,
+    finish,
+    belowMinimum,
+    startNextDay: start.getDate() !== nowD.getDate(),
+    finishNextDay: finish.getDate() !== nowD.getDate(),
+  }
+})
+
 function diffLabel(diff) {
   if (diff === 0) return 'Đúng giờ'
   return diff > 0 ? `Trễ ${fmtDur(diff)}` : `Sớm ${fmtDur(-diff)}`
@@ -154,7 +194,18 @@ function diffType(diff) {
       <n-gi>
         <div class="section">
           <div class="section-title">Thiết lập</div>
-          <n-form-item label="Giờ muốn hoàn thành" :show-feedback="false" class="field">
+
+          <n-tabs v-model:value="direction" type="segment" size="small" class="direction-tabs">
+            <n-tab-pane name="to-setting" tab="Muốn xong đúng giờ" />
+            <n-tab-pane name="to-finish" tab="Xem máy sẽ xong lúc nào" />
+          </n-tabs>
+
+          <n-form-item
+            v-if="direction === 'to-setting'"
+            label="Giờ muốn hoàn thành"
+            :show-feedback="false"
+            class="field"
+          >
             <n-time-picker
               v-model:value="finishAt"
               format="HH:mm"
@@ -205,6 +256,34 @@ function diffType(diff) {
             </n-button>
           </n-space>
 
+          <n-form-item
+            v-if="direction === 'to-finish'"
+            label="Mức hẹn giờ đang cài trên máy"
+            :show-feedback="false"
+            class="field"
+          >
+            <n-space :size="8">
+              <n-input-number
+                v-model:value="delayHours"
+                :min="0"
+                :max="20"
+                :show-button="false"
+                style="width: 110px"
+              >
+                <template #suffix>giờ</template>
+              </n-input-number>
+              <n-input-number
+                v-model:value="delayMinutes"
+                :min="0"
+                :max="59"
+                :show-button="false"
+                style="width: 110px"
+              >
+                <template #suffix>phút</template>
+              </n-input-number>
+            </n-space>
+          </n-form-item>
+
           <n-form-item label="Kiểu hẹn giờ của máy" :show-feedback="false" class="field field-tight">
             <n-radio-group v-model:value="mode">
               <n-radio-button value="end">Hẹn giờ kết thúc</n-radio-button>
@@ -221,7 +300,12 @@ function diffType(diff) {
             </template>
           </n-text>
 
-          <n-form-item label="Bước chỉnh hẹn giờ trên máy" :show-feedback="false" class="field">
+          <n-form-item
+            v-if="direction === 'to-setting'"
+            label="Bước chỉnh hẹn giờ trên máy"
+            :show-feedback="false"
+            class="field"
+          >
             <n-radio-group v-model:value="step">
               <n-radio-button :value="30">30 phút</n-radio-button>
               <n-radio-button :value="60">1 giờ</n-radio-button>
@@ -234,7 +318,7 @@ function diffType(diff) {
       <n-gi>
         <div class="section result-col">
           <div class="section-title">Kết quả</div>
-          <template v-if="result">
+          <template v-if="direction === 'to-setting' && result">
           <n-alert
             v-if="result.rolledToTomorrow"
             type="info"
@@ -307,8 +391,54 @@ function diffType(diff) {
           </div>
           </template>
 
+          <!-- Chiều ngược: từ thông số trên máy → giờ hoàn thành -->
+          <template v-else-if="direction === 'to-finish' && reverseResult">
+            <n-alert v-if="reverseResult.belowMinimum" type="warning" style="margin-bottom: 12px">
+              Máy kiểu "hẹn giờ kết thúc" không nhận mức hẹn thấp hơn thời gian giặt
+              ({{ fmtDur(cycleMin) }}) — kết quả tính theo mức tối thiểu.
+            </n-alert>
+
+            <n-statistic label="Máy sẽ hoàn thành lúc" style="margin-bottom: 16px">
+              <span class="big-setting">{{ fmtTime(reverseResult.finish) }}</span>
+              <n-tag
+                v-if="reverseResult.finishNextDay"
+                type="info"
+                size="small"
+                round
+                style="margin-left: 10px"
+              >
+                ngày mai
+              </n-tag>
+            </n-statistic>
+
+            <div class="timeline">
+              <div class="timeline-row">
+                <span class="dot dot-now"></span>
+                <span>Bấm bắt đầu bây giờ — <b>{{ fmtTime(now) }}</b></span>
+              </div>
+              <div class="timeline-row">
+                <span class="dot dot-start"></span>
+                <span>
+                  Máy bắt đầu giặt lúc <b>{{ fmtTime(reverseResult.start) }}</b>
+                  <n-tag v-if="reverseResult.startNextDay" size="tiny" round style="margin-left: 6px">
+                    ngày mai
+                  </n-tag>
+                </span>
+              </div>
+              <div class="timeline-row">
+                <span class="dot dot-finish"></span>
+                <span>
+                  Hoàn thành lúc <b>{{ fmtTime(reverseResult.finish) }}</b>
+                  <n-tag v-if="reverseResult.finishNextDay" size="tiny" round style="margin-left: 6px">
+                    ngày mai
+                  </n-tag>
+                </span>
+              </div>
+            </div>
+          </template>
+
           <n-text v-else depth="3">
-            Nhập giờ hoàn thành và thời gian chu trình giặt để xem kết quả.
+            Nhập đủ thông số để xem kết quả.
           </n-text>
         </div>
       </n-gi>
@@ -321,6 +451,9 @@ function diffType(diff) {
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 16px;
+}
+.direction-tabs {
+  margin-bottom: 20px;
 }
 /* :show-feedback="false" bỏ đệm mặc định nên tự thêm khoảng cách giữa các hàng */
 .section :deep(.field) {
