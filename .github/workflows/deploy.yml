@@ -17,6 +17,8 @@ jobs:
           node-version: "22.x"
       - run: npm install
       - run: npm run build
+        env:
+          VITE_BASE: /vue-minitools/
       - name: Deploy
         uses: crazy-max/ghaction-github-pages@v4
         with:
