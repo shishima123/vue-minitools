@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, h } from 'vue'
+import { ref, computed, h, watchEffect } from 'vue'
 import { useStorage, useWindowSize } from '@vueuse/core'
 import {
   NConfigProvider,
@@ -17,11 +17,13 @@ import {
 } from 'naive-ui'
 import { tools, getTool } from './tools'
 
-const isDark = useStorage(
-  'minitool:dark',
-  window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
-)
+const isDark = useStorage('minitool:dark', false)
 const theme = computed(() => (isDark.value ? darkTheme : null))
+
+// 'only light' chặn Auto Dark Theme của Chrome Android tự ép tối trang
+watchEffect(() => {
+  document.documentElement.style.colorScheme = isDark.value ? 'dark' : 'only light'
+})
 
 const themeOverrides = {
   common: {
